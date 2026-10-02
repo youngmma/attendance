@@ -143,8 +143,8 @@ html,body{margin:0;padding:0;height:100%;font-family:-apple-system,'Apple SD Got
 <div class="screen" id="scr-unknown">
   <div class="center">
     <p class="warn">등록되지 않은 얼굴입니다</p>
-    <p class="bigmsg">관리자에게 얼굴 등록을 요청하시거나<br>아래에서 수기로 출석할 수 있습니다</p>
-    <div class="rowbtns"><button class="btn btn-p" id="unknownManual">수기 출석</button><button class="btn btn-g" id="unknownRetry">다시 시도</button></div>
+    <p class="bigmsg">처음 오셨나요?<br>얼굴을 등록하거나 수기로 출석할 수 있습니다</p>
+    <div class="rowbtns"><button class="btn btn-p" id="unknownEnroll">얼굴 등록하기</button><button class="btn btn-g" id="unknownManual">수기 출석</button><button class="btn btn-g" id="unknownRetry">다시 시도</button></div>
   </div>
 </div>
 
@@ -195,6 +195,7 @@ html,body{margin:0;padding:0;height:100%;font-family:-apple-system,'Apple SD Got
     <div style="text-align:center;margin-bottom:14px;"><video id="enrollCam" class="enrollcam" playsinline muted autoplay></video></div>
     <div class="prog" id="enrollProgWrap" style="display:none;"><i id="enrollProg"></i></div>
     <p class="small" id="enrollMsg" style="text-align:center;margin-bottom:12px;"></p>
+    <p class="small" style="text-align:center;margin-bottom:12px;">평소에 안경을 쓰시면 쓴 채로 촬영해 주세요.<br>밝은 곳에서 정면을 봐 주세요.</p>
     <button class="btn btn-p" id="enrollGo" style="width:100%;">얼굴 촬영 시작</button>
   </div>
 </div>
@@ -359,7 +360,7 @@ document.addEventListener('visibilitychange', ()=>{
 });
 
 /* ============ 얼굴 인식 엔진 ============ */
-const APP_V = '2026-10-01';
+const APP_V = '2026-10-01-2';
 const LIB_URLS = [
   'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js',
   'https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js'
@@ -397,7 +398,7 @@ async function loadModels(){
   throw new Error('model-load-failed');
 }
 async function detectFaces(video){
-  return faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({inputSize:320, scoreThreshold:0.45}))
+  return faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({inputSize:416, scoreThreshold:0.45}))
     .withFaceLandmarks().withFaceDescriptors();
 }
 function bestMatch(desc){
@@ -468,6 +469,12 @@ async function kioskTick(){
     }
     if(needAbsent){ kioskBusy = false; return; }  /* 방금 출석한 사람이 아직 앞에 있음 */
     dets.sort((a,b)=> (b.detection.box.width*b.detection.box.height) - (a.detection.box.width*a.detection.box.height));
+    const faceRatio = dets[0].detection.box.width / (v.videoWidth || 1280);
+    if(faceRatio < 0.07){
+      /* 얼굴이 너무 작으면 식별 불가 — 가까이 유도 (UC7) */
+      setKioskMsg('조금 더 가까이 와주세요', '얼굴이 작게 보여 인식이 어렵습니다');
+      kioskBusy = false; return;
+    }
     const bm = bestMatch(dets[0].descriptor);
     const S = DB.settings;
     if(!bm || bm.d > S.tConfirm){
@@ -526,6 +533,7 @@ function showConfirm(member){
 /* 미등록 */
 function showUnknown(){
   show('scr-unknown');
+  $('unknownEnroll').onclick = ()=>{ openPin('enroll'); };
   $('unknownManual').onclick = ()=>{ openManual(); };
   $('unknownRetry').onclick = ()=>{ cooldownUntil = Date.now() + 1500; startKiosk(); };
 }
@@ -596,6 +604,7 @@ async function pinSubmit(){
   const ok = await unlockWithPin(pin);
   if(!ok){ $('pinErr').textContent = 'PIN이 맞지 않습니다.'; return; }
   if(pinMode === 'unlock'){ await afterUnlock(); }
+  else if(pinMode === 'enroll'){ reenrollId = null; openEnroll(); }
   else { show('scr-admin'); }
 }
 $('pinBack').onclick = ()=>{ if(DB) startKiosk(); };
@@ -637,6 +646,7 @@ async function setupFlow(){
 }
 
 /* ============ 얼굴 등록 ============ */
+let reenrollId = null;   /* 다시 촬영 중인 멤버 id (없으면 신규 등록) */
 function openEnroll(){
   show('scr-enroll');
   $('enrollName').value = ''; $('enrollConsent').checked = false;
@@ -664,7 +674,7 @@ async function captureDescriptors(n){
 $('enrollGo').onclick = async ()=>{
   const name = $('enrollName').value.trim();
   if(!name){ toast('이름을 입력해 주세요'); return; }
-  if(DB.members.some(m=>m.name===name)){ toast('이미 등록된 이름입니다'); return; }
+  if(!reenrollId && DB.members.some(m=>m.name===name)){ toast('이미 등록된 이름입니다'); return; }
   if(!$('enrollConsent').checked){ toast('본인 동의에 체크해 주세요'); return; }
   if(!modelsReady){ toast('모델이 아직 준비되지 않았습니다'); return; }
   $('enrollGo').disabled = true;
@@ -672,15 +682,22 @@ $('enrollGo').onclick = async ()=>{
   try{
     const avg = await captureDescriptors(5);
     const bm = bestMatch(avg);
-    if(bm && bm.d < DB.settings.tConfirm){
+    if(bm && (!reenrollId || bm.m.id !== reenrollId) && bm.d < DB.settings.tConfirm){
       if(!confirm('이미 등록된 ' + bm.m.name + ' 님의 얼굴과 비슷합니다.\n그래도 등록하시겠습니까?')){
         $('enrollGo').disabled = false; $('enrollProgWrap').style.display='none'; $('enrollMsg').textContent='';
         return;
       }
     }
-    DB.members.push({id:uid(), name, desc:avg, createdAt:Date.now()});
+    if(reenrollId){
+      const tm = DB.members.find(x=>x.id===reenrollId);
+      if(tm) tm.desc = avg;
+      toast(name + ' 님 얼굴을 다시 등록했습니다');
+      reenrollId = null;
+    }else{
+      DB.members.push({id:uid(), name, desc:avg, createdAt:Date.now()});
+      toast(name + ' 님 얼굴이 등록되었습니다');
+    }
     await saveVault();
-    toast(name + ' 님 얼굴이 등록되었습니다');
     show('scr-admin');
   }catch(e){ toast('촬영 중 오류가 발생했습니다. 다시 시도해 주세요'); }
   $('enrollGo').disabled = false; $('enrollProgWrap').style.display='none';
@@ -697,8 +714,12 @@ function renderMembers(){
     const wrap = document.createElement('span');
     if(!hasFace){
       const eb = document.createElement('button'); eb.className='del'; eb.style.color='#1f3a5f'; eb.style.marginRight='10px'; eb.textContent='얼굴등록';
-      eb.onclick = ()=>{ $('enrollName').value = m.name; openEnroll(); };
+      eb.onclick = ()=>{ openEnroll(); reenrollId = m.id; $('enrollName').value = m.name; };
       wrap.appendChild(eb);
+    }else{
+      const rb = document.createElement('button'); rb.className='del'; rb.style.color='#1f3a5f'; rb.style.marginRight='10px'; rb.textContent='다시 촬영';
+      rb.onclick = ()=>{ openEnroll(); reenrollId = m.id; $('enrollName').value = m.name; };
+      wrap.appendChild(rb);
     }
     const del = document.createElement('button'); del.className='del'; del.textContent='삭제';
     del.onclick = async ()=>{
@@ -864,7 +885,7 @@ document.querySelectorAll('[data-back]').forEach(b=>{ b.onclick = ()=>show('scr-
 document.querySelectorAll('.card[data-go]').forEach(c=>{
   c.onclick = ()=>{
     const t = c.getAttribute('data-go');
-    if(t==='scr-enroll') openEnroll();
+    if(t==='scr-enroll'){ reenrollId = null; openEnroll(); }
     else if(t==='scr-members') renderMembers();
     else if(t==='scr-records'){ recKey = todayKey(); recTab = 'in'; renderRecords(); }
     else if(t==='scr-settings') renderPreset();
