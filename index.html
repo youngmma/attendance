@@ -361,7 +361,7 @@ document.addEventListener('visibilitychange', ()=>{
 });
 
 /* ============ 얼굴 인식 엔진 ============ */
-const APP_V = '2026-10-01-3';
+const APP_V = '2026-10-01-4';
 const LIB_URLS = [
   'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js',
   'https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js'
@@ -612,9 +612,19 @@ async function pinSubmit(){
   else if(pinMode === 'enroll'){ reenrollId = null; openEnroll(); }
   else { show('scr-admin'); }
 }
+let resetArmed = false, resetTimer = 0;
+const RESET_TXT = 'PIN이 생각나지 않으세요? 처음부터 다시 시작';
 $('pinReset').onclick = (e)=>{
   e.preventDefault();
-  if(confirm('정말 처음부터 다시 시작할까요?\n저장된 명단·얼굴·출석 기록이 모두 지워집니다.')){
+  const a = e.target.closest('a') || e.target;
+  if(!resetArmed){
+    resetArmed = true;
+    a.textContent = '정말 모두 지우고 처음부터 시작할까요? 한 번 더 누르세요';
+    a.style.color = '#b3402e'; a.style.fontWeight = 'bold';
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(()=>{ resetArmed=false; a.textContent=RESET_TXT; a.style.color='#5a6b7d'; a.style.fontWeight=''; }, 8000);
+  }else{
+    clearTimeout(resetTimer);
     localStorage.removeItem(LS_KEY);
     location.reload();
   }
