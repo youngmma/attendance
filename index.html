@@ -176,7 +176,7 @@ html,body{margin:0;padding:0;height:100%;font-family:-apple-system,'Apple SD Got
 
 <!-- 관리 메뉴 -->
 <div class="screen" id="scr-admin">
-  <div class="hd"><span class="t">관리자 메뉴</span><span class="d"><button id="adminBack">키오스크로</button></span></div>
+  <div class="hd"><span class="t">관리자 메뉴</span><span class="d"><button id="adminLogout">로그아웃</button> <button id="adminBack">키오스크로</button></span></div>
   <div class="menu">
     <div class="card" data-go="scr-enroll">얼굴 등록<small>이름 + 얼굴 촬영 (동의 필수)</small></div>
     <div class="card" data-go="scr-members">명단 관리<small>등록된 순장 목록</small></div>
@@ -361,7 +361,7 @@ document.addEventListener('visibilitychange', ()=>{
 });
 
 /* ============ 얼굴 인식 엔진 ============ */
-const APP_V = '2026-10-01-5';
+const APP_V = '2026-10-01-6';
 const LIB_URLS = [
   'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js',
   'https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js'
@@ -568,8 +568,37 @@ function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;'
 
 /* ============ 관리자 PIN 패드 ============ */
 let pinBuf = '', pinMode = 'unlock', pendingRestoreRaw = null, pinSlots = 4;
+
+/* ---- 관리자 세션: PIN 1회 입력 후 30분간 유지 ---- */
+const SESSION_MS = 30*60*1000;   /* 30분 */
+const ADMIN_SCREENS = ['scr-admin','scr-enroll','scr-members','scr-import','scr-records','scr-backup','scr-settings'];
+let sessionUntil = 0;            /* 메모리 전용 (새로고침하면 사라짐) */
+function sessionValid(){ return Date.now() < sessionUntil; }
+function touchSession(){ sessionUntil = Date.now() + SESSION_MS; }
+/* 관리자 화면에서 조작하면 세션 30분 연장 */
+document.addEventListener('click', ()=>{
+  const cur = document.querySelector('.screen.on');
+  if(cur && ADMIN_SCREENS.indexOf(cur.id) >= 0) touchSession();
+}, true);
+/* 관리자 화면에 머물다 세션이 만료되면 키오스크로 복귀 */
+setInterval(()=>{
+  const cur = document.querySelector('.screen.on');
+  if(cur && ADMIN_SCREENS.indexOf(cur.id) >= 0 && !sessionValid()){
+    toast('세션이 만료되어 키오스크로 돌아갑니다');
+    startKiosk();
+  }
+}, 30000);
+
 function openPin(mode){
-  pinMode = mode || 'admin'; pinBuf = '';
+  pinMode = mode || 'admin';
+  /* 세션이 살아있으면 PIN 생략 (백업 복원 모드는 항상 PIN 필요) */
+  if((pinMode === 'admin' || pinMode === 'enroll') && sessionValid()){
+    touchSession(); stopKiosk();
+    if(pinMode === 'enroll'){ reenrollId = null; openEnroll(); }
+    else { show('scr-admin'); }
+    return;
+  }
+  pinBuf = '';
   pinSlots = 4;
   try{
     const src = (mode === 'restore' && pendingRestoreRaw) ? pendingRestoreRaw : localStorage.getItem(LS_KEY);
@@ -608,12 +637,13 @@ async function pinSubmit(){
       if(!ok) throw 0;
       localStorage.setItem(LS_KEY, pendingRestoreRaw);
       pendingRestoreRaw = null;
-      toast('복원이 완료되었습니다'); show('scr-admin');
+      toast('복원이 완료되었습니다'); show('scr-admin'); touchSession();
     }catch(e){ $('pinErr').textContent = 'PIN이 맞지 않거나 파일이 손상되었습니다.'; }
     return;
   }
   const ok = await unlockWithPin(pin);
   if(!ok){ $('pinErr').textContent = 'PIN이 맞지 않습니다. 처음 정하신 번호를 다시 입력해 보세요.'; return; }
+  touchSession();   /* PIN 성공 → 세션 시작/연장 */
   if(pinMode === 'unlock'){ await afterUnlock(); }
   else if(pinMode === 'enroll'){ reenrollId = null; openEnroll(); }
   else { show('scr-admin'); }
@@ -921,6 +951,7 @@ document.querySelectorAll('.card[data-go]').forEach(c=>{
   };
 });
 $('adminBack').onclick = ()=>startKiosk();
+$('adminLogout').onclick = ()=>{ sessionUntil = 0; toast('로그아웃되었습니다'); startKiosk(); };
 $('kioskAdmin').onclick = ()=>openPin('admin');
 $('setupGo').onclick = setupFlow;
 
