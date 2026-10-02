@@ -331,7 +331,7 @@ async function setupVault(pin){
   DB = defaultDB(); vaultKey = key; vaultSaltB64 = b64e(salt);
   const verifier = await encObj(key, 'soonjang-ok');
   const vault = await encObj(key, DB);
-  localStorage.setItem(LS_KEY, JSON.stringify({v:1, salt:b64e(salt), verifier, vault}));
+  localStorage.setItem(LS_KEY, JSON.stringify({v:1, salt:b64e(salt), verifier, vault, pinLen:pin.length}));
 }
 function hasVault(){ return !!localStorage.getItem(LS_KEY); }
 
@@ -361,7 +361,7 @@ document.addEventListener('visibilitychange', ()=>{
 });
 
 /* ============ 얼굴 인식 엔진 ============ */
-const APP_V = '2026-10-01-4';
+const APP_V = '2026-10-01-5';
 const LIB_URLS = [
   'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js',
   'https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js'
@@ -567,15 +567,21 @@ function renderManual(q){
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* ============ 관리자 PIN 패드 ============ */
-let pinBuf = '', pinMode = 'unlock', pendingRestoreRaw = null;
+let pinBuf = '', pinMode = 'unlock', pendingRestoreRaw = null, pinSlots = 4;
 function openPin(mode){
   pinMode = mode || 'admin'; pinBuf = '';
+  pinSlots = 4;
+  try{
+    const src = (mode === 'restore' && pendingRestoreRaw) ? pendingRestoreRaw : localStorage.getItem(LS_KEY);
+    const raw = JSON.parse(src);
+    if(raw && raw.pinLen >= 4 && raw.pinLen <= 12) pinSlots = raw.pinLen;
+  }catch(e){}
   stopKiosk(); show('scr-pin'); renderPinDots(); $('pinErr').textContent = '';
 }
 function renderPinDots(){
   const d = $('pinDots'); d.innerHTML = '';
   const n = Math.min(pinBuf.length, 12);
-  for(let i=0;i<Math.max(4,n);i++){ const s=document.createElement('div'); s.className='dot'+(i<n?' f':''); d.appendChild(s); }
+  for(let i=0;i<Math.max(pinSlots,n);i++){ const s=document.createElement('div'); s.className='dot'+(i<n?' f':''); d.appendChild(s); }
 }
 let lastKeyT = 0, lastKeyV = '';
 $('pinPad').addEventListener('click', async (e)=>{
@@ -890,7 +896,7 @@ $('pinChangeGo').onclick = async ()=>{
   const key = await deriveKey(np, salt);
   const verifier = await encObj(key, 'soonjang-ok');
   const vault = await encObj(key, DB);
-  localStorage.setItem(LS_KEY, JSON.stringify({v:1, salt:b64e(salt), verifier, vault}));
+  localStorage.setItem(LS_KEY, JSON.stringify({v:1, salt:b64e(salt), verifier, vault, pinLen:np.length}));
   vaultKey = key; vaultSaltB64 = b64e(salt);
   $('newPin').value = '';
   toast('PIN이 변경되었습니다');
