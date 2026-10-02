@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#1f3a5f">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('./sw.js').catch(function (e) {
+      console.warn('서비스 워커 등록 실패:', e);
+    });
+  });
+}
+</script>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>순장반 얼굴인식 출석</title>
 <!-- face-api.js는 아래 ensureLib()에서 CDN 폴백과 함께 동적 로드됨 -->
